@@ -9,6 +9,3 @@ The data
 Visit images.cv how to use: https://images.cv/how-to-use
 -- 
 Categories that have been downloaded: ['fish'] 
-
-
-We hope you find images.cv useful :)
