@@ -1,0 +1,89 @@
+import os
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.applications import VGG16, ResNet50, MobileNet, InceptionV3, EfficientNetB0
+from tensorflow.keras.models import Model
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define paths
+data_dir = "path_to_dataset"
+train_dir = os.path.join(data_dir, 'train')
+val_dir = os.path.join(data_dir, 'val')
+
+data_gen = ImageDataGenerator(rescale=1./255, validation_split=0.2,
+                              rotation_range=30, zoom_range=0.2,
+                              horizontal_flip=True, vertical_flip=True)
+
+train_generator = data_gen.flow_from_directory(train_dir, target_size=(224, 224), batch_size=32, class_mode='categorical', subset='training')
+val_generator = data_gen.flow_from_directory(val_dir, target_size=(224, 224), batch_size=32, class_mode='categorical', subset='validation')
+
+# Build CNN model
+def build_cnn():
+    model = Sequential([
+        Conv2D(32, (3,3), activation='relu', input_shape=(224, 224, 3)),
+        MaxPooling2D(2,2),
+        Conv2D(64, (3,3), activation='relu'),
+        MaxPooling2D(2,2),
+        Conv2D(128, (3,3), activation='relu'),
+        MaxPooling2D(2,2),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dropout(0.5),
+        Dense(len(train_generator.class_indices), activation='softmax')
+    ])
+    return model
+
+# Train CNN
+cnn_model = build_cnn()
+cnn_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+history = cnn_model.fit(train_generator, validation_data=val_generator, epochs=10)
+cnn_model.save("cnn_model.h5")
+
+# Transfer learning function
+def build_transfer_model(base_model):
+    base_model.trainable = False
+    x = Flatten()(base_model.output)
+    x = Dense(128, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    output_layer = Dense(len(train_generator.class_indices), activation='softmax')(x)
+    model = Model(inputs=base_model.input, outputs=output_layer)
+    return model
+
+pretrained_models = [VGG16, ResNet50, MobileNet, InceptionV3, EfficientNetB0]
+best_model = None
+best_acc = 0
+
+for pm in pretrained_models:
+    base_model = pm(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+    model = build_transfer_model(base_model)
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    history = model.fit(train_generator, validation_data=val_generator, epochs=5)
+    val_acc = max(history.history['val_accuracy'])
+    if val_acc > best_acc:
+        best_acc = val_acc
+        best_model = model
+
+best_model.save("best_model.h5")
+
+# Streamlit app
+def predict_image(image):
+    model = keras.models.load_model("best_model.h5")
+    img = keras.preprocessing.image.load_img(image, target_size=(224, 224))
+    img_array = keras.preprocessing.image.img_to_array(img) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    predictions = model.predict(img_array)
+    class_names = list(train_generator.class_indices.keys())
+    return class_names[np.argmax(predictions)], np.max(predictions)
+
+# Save this file as app.py and run with streamlit
+import streamlit as st
+st.title("Fish Classification App")
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
+if uploaded_file is not None:
+    st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
+    label, confidence = predict_image(uploaded_file)
+    st.write(f"Prediction: {label} with {confidence:.2f} confidence")
